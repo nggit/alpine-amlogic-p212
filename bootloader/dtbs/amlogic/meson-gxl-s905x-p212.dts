@@ -8,9 +8,9 @@
 	model = "Amlogic Meson GXL (S905X) P212 Development Board";
 
 	aliases {
-		mmc0 = "/soc/apb@d0000000/mmc@72000";
-		mmc1 = "/soc/apb@d0000000/mmc@74000";
-		mmc2 = "/soc/apb@d0000000/mmc@70000";
+		mmc0 = "/soc/apb@d0000000/mmc@70000";
+		mmc1 = "/soc/apb@d0000000/mmc@72000";
+		mmc2 = "/soc/apb@d0000000/mmc@74000";
 		serial0 = "/soc/bus@c8100000/serial@4c0";
 		ethernet0 = "/soc/ethernet@c9410000";
 	};
@@ -1671,7 +1671,7 @@
 	sdio-pwrseq {
 		compatible = "mmc-pwrseq-simple";
 		reset-gpios = <0x15 0x55 0x01>;
-		clocks = <0x16>;
+		clocks = <0x12>;
 		clock-names = "ext_clock";
 		phandle = <0x26>;
 	};
