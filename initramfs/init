@@ -1,0 +1,119 @@
+#!/bin/sh
+# Copyright (c) 2026 Anggit Arfanto
+
+/bin/busybox --install -s /bin
+export PATH="$PATH:/usr/bin:/bin:/usr/sbin:/sbin"
+
+mount -t proc -o noexec,nosuid,nodev proc /proc
+mount -t sysfs -o noexec,nosuid,nodev sysfs /sys
+
+if ! mountpoint -q /dev; then
+	mount -t devtmpfs -o exec,nosuid,mode=0755,size=2M devtmpfs /dev || \
+	mount -t tmpfs -o exec,nosuid,mode=0755,size=2M tmpfs /dev || exec sh
+	[ -c /dev/console ] || mknod -m 600 /dev/console c 5 1
+	[ -c /dev/null ] || mknod -m 666 /dev/null c 1 3
+fi
+
+MODULES=loop,squashfs,simpledrm
+ROOT=
+ROOTDELAY=30
+CONSOLE=console
+
+for opt in $(cat /proc/cmdline); do
+	case "$opt" in
+		modules=*)
+			MODULES="$MODULES,${opt#modules=}"
+			;;
+		rootfstype=*)
+			MODULES="$MODULES,${opt#rootfstype=}"
+			;;
+		root=*)
+			ROOT="${opt#root=}"
+			;;
+		rootdelay=*)
+			ROOTDELAY="${opt#rootdelay=}"
+			;;
+		console=*)
+			CONSOLE="${opt#console=}"
+			CONSOLE="${CONSOLE%%,*}"
+			;;
+	esac
+done
+
+# shellcheck disable=SC2046
+modprobe -a $(echo "$MODULES" | tr ',' ' ') 2>/dev/null
+
+ROOTDEV=
+
+while [ "$ROOTDELAY" -ge 0 ]; do
+	case "$ROOT" in
+		/dev/*)
+			ROOTDEV="$ROOT"
+			;;
+		LABEL=*|UUID=*)
+			ROOTDEV="$(findfs "$ROOT" 2>/dev/null)"
+			;;
+	esac
+
+	[ -b "$ROOTDEV" ] && break
+
+	sleep 1
+	ROOTDELAY=$((ROOTDELAY - 1))
+done
+
+if [ ! -b "$ROOTDEV" ]; then
+	echo "initramfs: rootfs not found"
+	exec sh
+fi
+
+# expand ROOTFS partition
+
+# extract the disk name:
+# sda1 -> sda
+# mmcblk0p1 -> mmcblk0
+# loop0p1 -> loop0
+# sdp1 -> sdp
+DISK="$(basename "$ROOTDEV" | sed 's/[0-9]\+$//; s/\([0-9]\)p$/\1/')"
+PARTNUM="$(basename "$ROOTDEV" | grep -o '[0-9]\+$')"
+
+PARTSTART=$(cat /sys/class/block/"$(basename "$ROOTDEV")"/start 2>/dev/null)
+PARTSIZE=$(cat /sys/class/block/"$(basename "$ROOTDEV")"/size 2>/dev/null)
+DISKSIZE=$(cat /sys/class/block/"$DISK"/size 2>/dev/null)
+
+if [ -z "$PARTSTART" ] || [ -z "$PARTSIZE" ] || [ -z "$DISKSIZE" ]; then
+	echo "initramfs: cannot determine partition geometry"
+else
+	PARTEND=$((PARTSTART + PARTSIZE))
+	MAXEND=0
+
+	for part in /sys/class/block/"$DISK"/"$DISK"*; do
+		if [ -f "$part/start" ] && [ -f "$part/size" ]; then
+			end=$(($(cat "$part/start") + $(cat "$part/size")))
+			[ "$end" -gt "$MAXEND" ] && MAXEND="$end"
+		fi
+	done
+
+	if [ "$PARTEND" -eq "$MAXEND" ] && [ "$PARTEND" -lt "$DISKSIZE" ]; then
+		echo "initramfs: expanding $ROOTDEV: +$((DISKSIZE - PARTEND)) sectors"
+		printf "d\n%s\nn\np\n%s\n%s\n\nw\n" "$PARTNUM" "$PARTNUM" \
+		"$PARTSTART" | fdisk "/dev/$DISK" > /dev/null 2>&1
+		sync
+		reboot -f
+	else
+		echo "initramfs: $ROOTDEV not expanded"
+	fi
+
+	e2fsck -n "$ROOTDEV" > /dev/null 2>&1 || e2fsck -pf "$ROOTDEV" || exec sh
+	resize2fs "$ROOTDEV"
+	sync
+fi
+
+# switch over to new root
+mkdir -p /newroot
+mount -t ext4 -o rw "$ROOTDEV" /newroot || exec sh
+
+mount -o move /dev /newroot/dev
+mount -o move /proc /newroot/proc
+mount -o move /sys /newroot/sys
+
+exec switch_root -c "/dev/$CONSOLE" /newroot /sbin/init

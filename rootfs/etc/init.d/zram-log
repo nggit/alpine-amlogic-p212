@@ -1,0 +1,38 @@
+#!/sbin/openrc-run
+# Copyright (c) 2026 Anggit Arfanto
+ 
+description="Mounts /var/log as a zram disk"
+ 
+: ${DISK_SIZE:="64M"}
+ 
+depend() {
+        before dmesg syslog
+}
+ 
+start() {
+        ebegin "Starting zram logging"
+    
+        if df /var/log | grep '^/dev/zram[0-9]' > /dev/null 2>&1; then
+                ewarn "/var/log is already mounted as zram"
+                eend 0
+                return 0
+        fi
+ 
+        modprobe zram num_devices=2 2>/dev/null
+ 
+        if [ -b /dev/zram1 ]; then
+                echo "$DISK_SIZE" > /sys/block/zram1/disksize
+                mkfs.ext4 -q /dev/zram1
+                rm -rf /var/log/*
+                mount /dev/zram1 /var/log
+                einfo "/var/log -> zram1"
+        fi
+ 
+        eend $?
+}
+ 
+stop() {
+        ebegin "Stopping zram logging"
+        # umount /var/log
+        eend $?
+}

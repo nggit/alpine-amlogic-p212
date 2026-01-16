@@ -1,0 +1,5 @@
+load_on_start=yes
+unload_on_stop=no
+num_devices=2
+type0=swap
+size0=1024
